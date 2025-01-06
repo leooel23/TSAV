@@ -1,0 +1,403 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Time Series Analysis</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+        .container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+        }
+        .form-container, .features-container, .plot-container {
+            flex: 1;
+            margin: 10px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        .form-container {
+            max-width: 300px;
+        }
+        .features-container {
+            max-width: 400px;
+            overflow-y: auto;
+            max-height: 500px;
+        }
+        .plot-container {
+            flex: 2;
+        }
+        .features-list {
+            display: flex;
+            flex-wrap: wrap;
+        }
+        .features-list div {
+            width: 50%;
+        }
+        .plot-feature-container {
+            display: flex;
+            flex-direction: row;
+            margin-bottom: 20px;
+        }
+        .plot {
+            flex: 2;
+        }
+        .features {
+            flex: 1;
+            margin-left: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Time Series Analysis</h1>
+    <div class="container">
+        <div class="form-container">
+            <form id="dataset-form">
+                <label for="dataset">Select Dataset:</label>
+                <select id="dataset" name="dataset">
+                    {% for name, path in datasets.items() %}
+                        <option value="{{ name }}">{{ name }}</option>
+                    {% endfor %}
+                </select>
+                <button type="button" onclick="selectDataset()">Select</button>
+            </form>
+            <div id="data-info">
+                <p>Shape: <span id="shape"></span></p>
+            </div>
+            <form id="plot-form">
+                <label for="N">N:</label>
+                <input type="number" id="N-input" name="N" value="0">
+                <input type="range" id="N-range" min="0" max="0" value="0" oninput="syncN()">
+                <br>
+                <label for="M">M:</label>
+                <input type="number" id="M-input" name="M" value="0">
+                <input type="range" id="M-range" min="0" max="0" value="0" oninput="syncM()">
+                <br>
+                <label for="start">Start:</label>
+                <input type="number" id="start" name="start" value="0">
+                <br>
+                <label for="end">End:</label>
+                <input type="number" id="end" name="end">
+                <div id="range-slider-container">
+                    <input type="range" id="start-end-range" min="0" max="0" value="0" oninput="syncStartEnd()">
+                    <input type="range" id="start-end-range-end" min="0" max="0" value="0" oninput="syncStartEnd()">
+                </div>
+                <br>
+                <button type="button" onclick="plotSeries()">Plot</button>
+            </form>
+        </div>
+        <div class="features-container">
+            <h2>Select Features</h2>
+            <form id="features-form">
+                <div id="features-list" class="features-list"></div>
+                <button type="button" onclick="fetchSelectedFeatures()">Get Selected Features</button>
+            </form>
+        </div>
+        <div id="plots-container" class="plot-container">
+            <h2>Time Series Plots and Features</h2>
+        </div>
+    </div>
+
+    <script>
+        function selectDataset() {
+            $.ajax({
+                url: '/select_dataset',
+                type: 'POST',
+                data: $('#dataset-form').serialize(),
+                success: function(response) {
+                    alert('Dataset selected');
+                    $('#shape').text('(' + response.shape[0] + ', ' + response.shape[1] + ', ' + response.shape[2] + ')');
+                    $('#N-range').attr('max', response.shape[1] - 1);
+                    $('#M-range').attr('max', response.shape[2] - 1);
+                    $('#start-end-range').attr('max', response.shape[0] - 1);
+                    $('#start-end-range-end').attr('max', response.shape[0] - 1);
+                    fetchFeatures();
+                }
+            });
+        }
+
+        function syncN() {
+            $('#N-input').val($('#N-range').val());
+        }
+
+        function syncM() {
+            $('#M-input').val($('#M-range').val());
+        }
+
+        function syncStartEnd() {
+            let start = Math.min($('#start-end-range').val(), $('#start-end-range-end').val());
+            let end = Math.max($('#start-end-range').val(), $('#start-end-range-end').val());
+            $('#start').val(start);
+            $('#end').val(end);
+        }
+
+        function plotSeries() {
+            let selectedFeatures = [];
+            $('input[name="selected_features"]:checked').each(function() {
+                selectedFeatures.push($(this).val());
+            });
+            localStorage.setItem('selected_features', JSON.stringify(selectedFeatures));
+
+            $.ajax({
+                url: '/plot',
+                type: 'POST',
+                data: $('#plot-form').serialize() + '&' + $('#features-form').serialize(),
+                success: function(response) {
+                    $('#plots-container').empty();
+                    response.plots.forEach(function(plot, index) {
+                        let plotFeatureContainer = $('<div class="plot-feature-container"></div>');
+                        let plotDiv = $('<div class="plot"></div>');
+                        let img = $('<img>').attr('src', plot.plot_url).attr('alt', 'Time Series Plot');
+                        plotDiv.append(img);
+                        plotFeatureContainer.append(plotDiv);
+
+                        let featuresDiv = $('<div class="features"></div>');
+                        for (let key in plot.features) {
+                            featuresDiv.append('<div>' + key + ': ' + plot.features[key] + '</div>');
+                        }
+                        plotFeatureContainer.append(featuresDiv);
+
+                        $('#plots-container').append(plotFeatureContainer);
+                    });
+                }
+            });
+        }
+
+        function fetchFeatures() {
+            $.ajax({
+                url: '/get_features',
+                type: 'POST',
+                data: $('#plot-form').serialize(),
+                success: function(response) {
+                    let featuresList = $('#features-list');
+                    featuresList.empty();
+                    response.features.forEach(function(feature) {
+                        let isChecked = localStorage.getItem('selected_features') && localStorage.getItem('selected_features').includes(feature);
+                        featuresList.append('<div><input type="checkbox" name="selected_features" value="' + feature + '"' + (isChecked ? ' checked' : '') + '>' + feature + '</div>');
+                    });
+                }
+            });
+        }
+
+        function fetchSelectedFeatures() {
+            let selectedFeatures = [];
+            $('input[name="selected_features"]:checked').each(function() {
+                selectedFeatures.push($(this).val());
+            });
+            localStorage.setItem('selected_features', JSON.stringify(selectedFeatures));
+
+            $.ajax({
+                url: '/features',
+                type: 'POST',
+                data: $('#plot-form').serialize() + '&' + $('#features-form').serialize(),
+                success: function(response) {
+                    let featuresContainer = $('#features-container');
+                    featuresContainer.empty();
+                    for (let key in response) {
+                        featuresContainer.append('<div>' + key + ': ' + response[key] + '</div>');
+                    }
+                    plotSeries();
+                }
+            });
+        }
+
+        $(document).ready(function() {
+            if (localStorage.getItem('selected_features')) {
+                fetchFeatures();
+            }
+        });
+    </script>
+</body>
+</html>
+
+<!-- <!DOCTYPE html>
+<html>
+<head>
+    <title>Time Series Analysis</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+        .container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+        }
+        .form-container, .features-container, .plot-container {
+            flex: 1;
+            margin: 10px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        .form-container {
+            max-width: 300px;
+        }
+        .features-container {
+            max-width: 400px;
+            overflow-y: auto;
+            max-height: 500px;
+        }
+        .plot-container {
+            flex: 2;
+        }
+        .features-list {
+            display: flex;
+            flex-wrap: wrap;
+        }
+        .features-list div {
+            width: 50%;
+        }
+    </style>
+</head>
+<body>
+    <h1>Time Series Analysis</h1>
+    <div class="container">
+        <div class="form-container">
+            <form id="dataset-form">
+                <label for="dataset">Select Dataset:</label>
+                <select id="dataset" name="dataset">
+                    {% for name, path in datasets.items() %}
+                        <option value="{{ name }}">{{ name }}</option>
+                    {% endfor %}
+                </select>
+                <button type="button" onclick="selectDataset()">Select</button>
+            </form>
+            <div id="data-info">
+                <p>Shape: <span id="shape"></span></p>
+            </div>
+            <form id="plot-form">
+                <label for="N">N:</label>
+                <input type="number" id="N-input" name="N" value="0">
+                <input type="range" id="N-range" min="0" max="0" value="0" oninput="syncN()">
+                <br>
+                <label for="M">M:</label>
+                <input type="number" id="M-input" name="M" value="0">
+                <input type="range" id="M-range" min="0" max="0" value="0" oninput="syncM()">
+                <br>
+                <label for="start">Start:</label>
+                <input type="number" id="start" name="start" value="0">
+                <br>
+                <label for="end">End:</label>
+                <input type="number" id="end" name="end">
+                <div id="range-slider-container">
+                    <input type="range" id="start-end-range" min="0" max="0" value="0" oninput="syncStartEnd()">
+                    <input type="range" id="start-end-range-end" min="0" max="0" value="0" oninput="syncStartEnd()">
+                </div>
+                <br>
+                <button type="button" onclick="plotSeries()">Plot</button>
+            </form>
+        </div>
+        <div class="features-container">
+            <h2>Select Features</h2>
+            <form id="features-form">
+                <div id="features-list" class="features-list"></div>
+                <button type="button" onclick="fetchSelectedFeatures()">Get Selected Features</button>
+            </form>
+        </div>
+        <div class="plot-container">
+            <h2>Time Series Plot</h2>
+            <img id="plot" src="" alt="Time Series Plot">
+            <div id="selected-features-section">
+                <h2>Selected Features</h2>
+                <div id="features-container"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function selectDataset() {
+            $.ajax({
+                url: '/select_dataset',
+                type: 'POST',
+                data: $('#dataset-form').serialize(),
+                success: function(response) {
+                    alert('Dataset selected');
+                    $('#shape').text('(' + response.shape[0] + ', ' + response.shape[1] + ', ' + response.shape[2] + ')');
+                    $('#N-range').attr('max', response.shape[1] - 1);
+                    $('#M-range').attr('max', response.shape[2] - 1);
+                    $('#start-end-range').attr('max', response.shape[0] - 1);
+                    $('#start-end-range-end').attr('max', response.shape[0] - 1);
+                }
+            });
+        }
+
+        function syncN() {
+            $('#N-input').val($('#N-range').val());
+        }
+
+        function syncM() {
+            $('#M-input').val($('#M-range').val());
+        }
+
+        function syncStartEnd() {
+            let start = Math.min($('#start-end-range').val(), $('#start-end-range-end').val());
+            let end = Math.max($('#start-end-range').val(), $('#start-end-range-end').val());
+            $('#start').val(start);
+            $('#end').val(end);
+        }
+
+        function plotSeries() {
+            $.ajax({
+                url: '/plot',
+                type: 'POST',
+                data: $('#plot-form').serialize(),
+                success: function(response) {
+                    $('#plot').attr('src', response.plot_url);
+                    fetchFeatures();
+                }
+            });
+        }
+
+        function fetchFeatures() {
+            $.ajax({
+                url: '/get_features',
+                type: 'POST',
+                data: $('#plot-form').serialize(),
+                success: function(response) {
+                    let featuresList = $('#features-list');
+                    featuresList.empty();
+                    response.features.forEach(function(feature) {
+                        let isChecked = localStorage.getItem('selected_features') && localStorage.getItem('selected_features').includes(feature);
+                        featuresList.append('<div><input type="checkbox" name="selected_features" value="' + feature + '"' + (isChecked ? ' checked' : '') + '>' + feature + '</div>');
+                    });
+                }
+            });
+        }
+
+        function fetchSelectedFeatures() {
+            let selectedFeatures = [];
+            $('input[name="selected_features"]:checked').each(function() {
+                selectedFeatures.push($(this).val());
+            });
+            localStorage.setItem('selected_features', JSON.stringify(selectedFeatures));
+
+            $.ajax({
+                url: '/features',
+                type: 'POST',
+                data: $('#plot-form').serialize() + '&' + $('#features-form').serialize(),
+                success: function(response) {
+                    let featuresContainer = $('#features-container');
+                    featuresContainer.empty();
+                    for (let key in response) {
+                        featuresContainer.append('<div>' + key + ': ' + response[key] + '</div>');
+                    }
+                }
+            });
+        }
+
+        $(document).ready(function() {
+            if (localStorage.getItem('selected_features')) {
+                fetchFeatures();
+            }
+        });
+    </script>
+</body>
+</html> -->
+
+
